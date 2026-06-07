@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """G1 locomotion environment configuration.
 
 Standard ManagerBasedRLEnv with:
@@ -95,9 +98,9 @@ class CommandsCfg:
         asset_name="robot",
         resampling_time_range=(8.0, 10.0),
         ranges={
-            "vel_x":       (-1.0,  1.0),
-            "vel_y":       (-0.5,  0.5),
-            "omega":       (-1.0,  1.0),
+            "vel_x":       (-0.5,  0.5),
+            "vel_y":       (-0.3,  0.3),
+            "omega":       (-0.5,  0.5),
             "height":      (0.60,  0.78),
             "gait_freq":   (1.0,   2.0),
             "step_height": (0.05,  0.12),
@@ -108,6 +111,7 @@ class CommandsCfg:
         heading_prob=0.30,
         use_heading=True,
         heading_gain=1.0,
+        min_walk_speed=0.15,
         debug_vis=True,
     )
 
@@ -322,42 +326,34 @@ _WALKING_POSE_WEIGHTS = {
     **{j: 0.5 for j in NON_ACTION_JOINTS},
 }
 
-# Per-joint weights when standing — all joints tightly held (source POSE_WEIGHTS_STANDING)
-_STANDING_POSE_WEIGHTS = {
-    # Leg joints — all 5.0 when stationary
-    "left_hip_roll_joint":    5.0,  "right_hip_roll_joint":    5.0,
-    "left_hip_pitch_joint":   5.0,  "right_hip_pitch_joint":   5.0,
-    "left_hip_yaw_joint":     5.0,  "right_hip_yaw_joint":     5.0,
-    "left_knee_joint":        5.0,  "right_knee_joint":        5.0,
-    "left_ankle_pitch_joint": 5.0,  "right_ankle_pitch_joint": 5.0,
-    "left_ankle_roll_joint":  5.0,  "right_ankle_roll_joint":  5.0,
-    # Non-action joints: also tightened during stance
-    **{j: 2.0 for j in NON_ACTION_JOINTS},
-}
-
 
 @configclass
 class RewardsCfg:
-    # Task — weights and std match source (sum-of-squares kernel, std not squared)
+    # ── Task ─────────────────────────────────────────────────────────────────
     track_vel_xy = RewardTermCfg(
         func=apex_mdp.track_lin_vel_xy,
-        weight=5.0,
-        params={"std": math.sqrt(0.25), "command_name": "motion_command"},
+        weight=8.0,
+        params={"std": math.sqrt(0.15), "command_name": "motion_command"},
     )
     track_vel_z = RewardTermCfg(
         func=apex_mdp.track_ang_vel_z,
-        weight=4.0,
-        params={"std": math.sqrt(0.25), "command_name": "motion_command"},
+        weight=6.0,
+        params={"std": math.sqrt(0.15), "command_name": "motion_command"},
     )
     track_height = RewardTermCfg(
         func=apex_mdp.track_height,
         weight=3.0,
         params={"std": math.sqrt(0.05), "command_name": "motion_command"},
     )
-    # Gait
+    vel_progress = RewardTermCfg(
+        func=apex_mdp.vel_tracking_progress,
+        weight=3.0,
+        params={"command_name": "motion_command", "stance_threshold": 0.1},
+    )
+    # ── Gait ─────────────────────────────────────────────────────────────────
     gait_sync = RewardTermCfg(
         func=apex_mdp.gait_phase_sync,
-        weight=3.0,
+        weight=2.0,
         params={
             "left_sensor_cfg": _left_sensor_cfg,
             "right_sensor_cfg": _right_sensor_cfg,
@@ -366,14 +362,14 @@ class RewardsCfg:
     )
     foot_clearance = RewardTermCfg(
         func=apex_mdp.foot_clearance,
-        weight=5.0,
+        weight=2.0,
         params={
             "left_foot_cfg": _left_foot_cfg,
             "right_foot_cfg": _right_foot_cfg,
             "command_name": "motion_command",
         },
     )
-    # Posture
+    # ── Posture ───────────────────────────────────────────────────────────────
     upright = RewardTermCfg(
         func=apex_mdp.body_upright,
         weight=1.0,
@@ -384,17 +380,14 @@ class RewardsCfg:
     )
     default_pose = RewardTermCfg(
         func=apex_mdp.default_pose,
-        weight=1.0,
+        weight=0.5,
         params={
             "asset_cfg": _all_joint_cfg,
             "weights": _WALKING_POSE_WEIGHTS,
-            "standing_weights": _STANDING_POSE_WEIGHTS,
             "std": math.sqrt(0.1),
-            "command_name": "motion_command",
-            "stance_threshold": 0.1,
         },
     )
-    # Foot behavior — all positive weights, _exp_l1 kernel, std=sqrt(0.1)
+    # ── Foot quality ─────────────────────────────────────────────────────────
     foot_flat = RewardTermCfg(
         func=apex_mdp.foot_flat_at_contact,
         weight=1.0,
@@ -410,7 +403,7 @@ class RewardsCfg:
         weight=0.5,
         params={"asset_cfg": _all_feet_cfg, "sensor_cfg": _all_feet_sensor_cfg, "std": math.sqrt(0.1)},
     )
-    # Regularisation — positive weights + _qabs kernel (source "quadabs" mode)
+    # ── Regularisation ────────────────────────────────────────────────────────
     action_rate = RewardTermCfg(
         func=apex_mdp.action_rate,
         weight=1.0,
@@ -418,17 +411,17 @@ class RewardsCfg:
     )
     joint_vel = RewardTermCfg(
         func=apex_mdp.joint_vel_penalty,
-        weight=0.5,
+        weight=1.0,
         params={"std": math.sqrt(0.1), "asset_cfg": _all_joint_cfg},
     )
     joint_torque = RewardTermCfg(
         func=apex_mdp.joint_torque_penalty,
-        weight=0.5,
+        weight=1.0,
         params={"std": math.sqrt(0.1), "asset_cfg": _all_joint_cfg},
     )
     joint_limits = RewardTermCfg(
         func=apex_mdp.joint_pos_limits_penalty,
-        weight=0.5,
+        weight=1.0,
         params={"std": math.sqrt(0.1), "asset_cfg": _all_joint_cfg},
     )
     # angular_momentum = RewardTermCfg(
@@ -458,6 +451,41 @@ class TerminationsCfg:
     )
 
 
+# ── Curriculum ───────────────────────────────────────────────────────────
+
+@configclass
+class CurriculumCfg:
+    """Two-track curriculum: performance-gated velocity ranges + time-based reg annealing."""
+
+    vel_range = CurriculumTermCfg(
+        func=apex_mdp.VelRangeCurriculum,
+        params={
+            "command_name": "motion_command",
+            "stages": [
+                {"vel_x": (-0.5, 0.5), "vel_y": (-0.3, 0.3), "omega": (-0.5, 0.5)},
+                {"vel_x": (-0.8, 0.8), "vel_y": (-0.4, 0.4), "omega": (-0.8, 0.8)},
+                {"vel_x": (-1.0, 1.0), "vel_y": (-0.5, 0.5), "omega": (-1.0, 1.0)},
+            ],
+            "advance_thresh": 0.65,
+            "regress_thresh": 0.25,
+            "ema_alpha": 0.1,
+        },
+    )
+
+    reg_weights = CurriculumTermCfg(
+        func=apex_mdp.RegWeightCurriculum,
+        params={
+            "terms": {
+                "action_rate":  2.0,   # → 0.3  (suppress jitter early)
+                "joint_vel":    0.5,   # → 0.1
+                "joint_torque": 0.5,   # → 0.1
+                "default_pose": 3.0,   # → 1.0  (keep near default until stable)
+            },
+            "warmup_steps": 20_000,
+        },
+    )
+
+
 # ── Environment Config ────────────────────────────────────────────────────
 
 @configclass
@@ -471,6 +499,7 @@ class G1LocomotionEnvCfg(ManagerBasedRLEnvCfg):
     events: EventCfg = EventCfg()
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
+    curriculum: CurriculumCfg = CurriculumCfg()
 
     def __post_init__(self):
         self.decimation = 4

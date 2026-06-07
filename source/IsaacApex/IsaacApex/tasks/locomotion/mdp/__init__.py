@@ -1,7 +1,11 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """MDP components for the G1 locomotion task."""
 
 from .actions import HoldDefaultJointsAction, HoldDefaultJointsActionCfg
 from .commands import GaitCommand, GaitCommandCfg
+from .curriculum import RegWeightCurriculum, VelRangeCurriculum
 from .observations import contact_air_time, contact_state, foot_height, gait_phase_obs, log_contact_forces
 from .rewards import (
     action_rate,
@@ -19,5 +23,6 @@ from .rewards import (
     track_ang_vel_z,
     track_height,
     track_lin_vel_xy,
+    vel_tracking_progress,
 )
 from .terminations import fell_over, illegal_contact

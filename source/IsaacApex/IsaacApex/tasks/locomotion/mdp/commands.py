@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """Gait-aware locomotion command generator.
 
 Produces velocity + height + gait-frequency commands and maintains per-foot

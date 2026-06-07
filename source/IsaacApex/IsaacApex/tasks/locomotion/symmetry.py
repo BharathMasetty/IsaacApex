@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """Sagittal-plane reflection for the G1 locomotion policy.
 
 Appending mirrored samples to every training mini-batch improves sample

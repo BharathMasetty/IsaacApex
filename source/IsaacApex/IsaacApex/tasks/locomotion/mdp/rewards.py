@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """Reward functions for the G1 locomotion task."""
 
 from __future__ import annotations
@@ -110,10 +113,7 @@ def default_pose(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,
     weights: dict[str, float],
-    standing_weights: dict[str, float],
     std: float = 0.1,
-    command_name: str = "motion_command",
-    stance_threshold: float = 0.1,
 ) -> torch.Tensor:
     """Reward per-joint proximity to default pose with motion-adaptive per-joint weights.
 
@@ -121,21 +121,11 @@ def default_pose(
     allowing tighter stance enforcement during standing without penalising walking gait.
     """
     asset: Articulation = env.scene[asset_cfg.name]
-    cmd = env.command_manager.get_command(command_name)
-    is_moving = (cmd[:, :2].norm(dim=1) + cmd[:, 2].abs()) >= stance_threshold  # (N,)
-
     joint_ids, joint_names = asset.find_joints(list(weights.keys()))
     _, _, w_walk = resolve_matching_names_values(weights, joint_names)
-    _, _, w_stand = resolve_matching_names_values(standing_weights, joint_names)
-
     w_walk_t = torch.tensor(w_walk, device=env.device, dtype=torch.float32)
-    w_stand_t = torch.tensor(w_stand, device=env.device, dtype=torch.float32)
-
-    # Select per-env weight vector: (N, J)
-    w = torch.where(is_moving.unsqueeze(-1), w_walk_t, w_stand_t)
-
     deviation = asset.data.joint_pos[:, joint_ids] - asset.data.default_joint_pos[:, joint_ids]
-    return _exp_l1(deviation * w, std)
+    return _exp_l1(deviation * w_walk_t, std)
 
 
 # ── Gait shape ────────────────────────────────────────────────────────────
@@ -298,6 +288,28 @@ def foot_impact_vel(
     first_contact = sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids].float()
     speed = asset.data.body_link_lin_vel_w[:, asset_cfg.body_ids].norm(dim=-1)
     return _exp_l1(speed * first_contact, std)
+
+
+# ── Velocity progress ────────────────────────────────────────────────────
+
+def vel_tracking_progress(
+    env: ManagerBasedRLEnv,
+    command_name: str = "motion_command",
+    stance_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Linear-decay reward: 1 - ||vel_error|| / ||cmd_vel||, clamped to [0, 1].
+    """
+    asset: Articulation = env.scene["robot"]
+    cmd = env.command_manager.get_command(command_name)
+    cmd_speed = cmd[:, :2].norm(dim=1) + cmd[:, 2].abs()
+    moving = cmd_speed >= stance_threshold
+
+    vel_b = asset.data.root_lin_vel_b
+    ang_b = asset.data.root_ang_vel_b
+    err_xy = (cmd[:, :2] - vel_b[:, :2]).norm(dim=1)
+    err_z = (cmd[:, 2] - ang_b[:, 2]).abs()
+    progress = (1.0 - (err_xy + err_z) / cmd_speed.clamp(min=1e-3)).clamp(min=0.0)
+    return torch.where(moving, progress, torch.ones_like(progress))
 
 
 # ── Regularisation ────────────────────────────────────────────────────────

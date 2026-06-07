@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """G1 locomotion task — velocity + height tracking with gait clock."""
 
 import gymnasium as gym

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """Unitree G1 humanoid robot configuration for Isaac Lab.
 
 The Nucleus USD has 37 actuated DoF:
@@ -186,7 +189,7 @@ G1_CFG = ArticulationCfg(
 # ── Per-joint action scale ────────────────────────────────────────────────
 # scale ≈ effort_limit / stiffness / 4 so max residual command ≈ effort_limit
 
-_EFFORT_SCALE = 4.0
+_EFFORT_SCALE = 2.0
 
 ACTION_SCALE: dict[str, float] = {
     "left_hip_roll_joint":     111.0 / 100.0 / _EFFORT_SCALE,

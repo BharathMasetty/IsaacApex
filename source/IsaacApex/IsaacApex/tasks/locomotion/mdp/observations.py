@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bharath Masetty
+# SPDX-License-Identifier: MIT
+#
 """Custom observation functions for the G1 locomotion task."""
 
 from __future__ import annotations
