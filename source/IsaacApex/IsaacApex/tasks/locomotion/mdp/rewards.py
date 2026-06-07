@@ -10,7 +10,7 @@ import torch
 from typing import TYPE_CHECKING
 
 from isaaclab.assets import Articulation
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import ManagerTermBase, RewardTermCfg, SceneEntityCfg
 from isaaclab.sensors import ContactSensor
 from isaaclab.utils.math import quat_apply_inverse
 from isaaclab.utils.string import resolve_matching_names_values
@@ -59,24 +59,47 @@ def track_lin_vel_xy(
     return torch.exp(-total_sq / std**2)
 
 
-def track_ang_vel_z(
-    env: ManagerBasedRLEnv,
-    std: float,
-    command_name: str = "motion_command",
-    stance_threshold: float = 0.1,
-) -> torch.Tensor:
-    """Exponential reward for yaw tracking and pitch/roll suppression.
+class TrackAngVelZ(ManagerTermBase):
+    """Exponential reward for yaw tracking using a low-pass filtered yaw rate.
 
-    Uses sum-of-squared errors: exp(-(||ang_xy||² + z_err²) / std²).
+    Walking gait creates step-frequency oscillations in the raw yaw rate.
+    A per-env EMA smooths these out so the reward tracks mean turning rate
+    rather than reacting to every footfall.
+
+    Args:
+        std: Kernel width for the exponential reward.
+        filter_alpha: EMA coefficient applied each policy step.
+            At 20 Hz, alpha=0.1 gives a ~0.19 s time constant (≈ one gait
+            cycle at 2 Hz), which removes footfall noise while staying
+            responsive to intentional turning commands.
+        command_name: Name of the GaitCommand term.
+        stance_threshold: Commands below this speed are treated as standing.
     """
-    asset: Articulation = env.scene["robot"]
-    cmd = env.command_manager.get_command(command_name)
-    moving = (cmd[:, :2].norm(dim=1) + cmd[:, 2].abs()) >= stance_threshold
-    target_z = torch.where(moving, cmd[:, 2], torch.zeros_like(cmd[:, 2]))
-    ang_b = asset.data.root_ang_vel_b
-    xy_sq = ang_b[:, :2].square().sum(dim=-1)
-    z_sq = (target_z - ang_b[:, 2]).square()
-    return torch.exp(-(xy_sq + z_sq) / std**2)
+
+    def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self._filtered_yaw = torch.zeros(env.num_envs, device=env.device)
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        std: float,
+        filter_alpha: float = 0.1,
+        command_name: str = "motion_command",
+        stance_threshold: float = 0.1,
+    ) -> torch.Tensor:
+        asset: Articulation = env.scene["robot"]
+        ang_b = asset.data.root_ang_vel_b
+
+        self._filtered_yaw = filter_alpha * ang_b[:, 2] + (1.0 - filter_alpha) * self._filtered_yaw
+
+        cmd = env.command_manager.get_command(command_name)
+        moving = (cmd[:, :2].norm(dim=1) + cmd[:, 2].abs()) >= stance_threshold
+        target_z = torch.where(moving, cmd[:, 2], torch.zeros_like(cmd[:, 2]))
+
+        xy_sq = ang_b[:, :2].square().sum(dim=-1)
+        z_sq = (target_z - self._filtered_yaw).square()
+        return torch.exp(-(xy_sq + z_sq) / std**2)
 
 
 def track_height(

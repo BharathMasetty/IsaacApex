@@ -336,7 +336,7 @@ class RewardsCfg:
         params={"std": math.sqrt(0.15), "command_name": "motion_command"},
     )
     track_vel_z = RewardTermCfg(
-        func=apex_mdp.track_ang_vel_z,
+        func=apex_mdp.TrackAngVelZ,
         weight=6.0,
         params={"std": math.sqrt(0.15), "command_name": "motion_command"},
     )
@@ -476,12 +476,12 @@ class CurriculumCfg:
         func=apex_mdp.RegWeightCurriculum,
         params={
             "terms": {
-                "action_rate":  2.0,   # → 0.3  (suppress jitter early)
-                "joint_vel":    0.5,   # → 0.1
-                "joint_torque": 0.5,   # → 0.1
-                "default_pose": 3.0,   # → 1.0  (keep near default until stable)
+                "action_rate":  0.1,   
+                "joint_vel":    0.1,   
+                "joint_torque": 0.1,  
+                "default_pose": 0.1,  
             },
-            "warmup_steps": 20_000,
+            "warmup_iters": 3000,
         },
     )
 

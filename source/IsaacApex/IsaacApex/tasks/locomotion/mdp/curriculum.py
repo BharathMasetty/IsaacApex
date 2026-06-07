@@ -117,25 +117,22 @@ class VelRangeCurriculum(ManagerTermBase):
 class RegWeightCurriculum(ManagerTermBase):
     """Linearly anneals regularization reward weights from high start values to final values.
 
-    On the first call, reads the final weight for each named term directly from the
-    reward manager config (so RewardsCfg is always the source of truth for converged
-    behavior) and overrides it with the provided start weight.  Subsequent calls
-    interpolate linearly toward the final value over ``warmup_steps`` env steps.
-
-    Start weights should be higher than final weights so early training is conservative
-    (smooth actions, near-default pose), then the constraint relaxes as the policy matures.
+    The weight for each term starts at the value in RewardsCfg (loose, permissive) and
+    anneals up to the target weight in ``terms`` (tight, restrictive).  This lets the
+    agent explore freely early in training, then progressively constrains it toward
+    smooth, efficient behaviour.
 
     Args:
-        terms: Mapping of reward term name → start weight (high regularization).
-            The final weight is read from RewardsCfg at initialization time.
-        warmup_steps: Number of ``env.step()`` calls over which to anneal.
-            With RSL-RL collecting 24 steps/iter, 20 000 steps ≈ 833 PPO updates.
-        log_interval: Print a weight summary every this many env steps (0 = off).
+        terms: Mapping of reward term name → final (tight) target weight.
+            The initial (loose) weight is read from RewardsCfg at startup.
+        warmup_iters: Number of PPO iterations over which to anneal.
+        steps_per_iter: Rollout length in env steps per iteration (RSL-RL default: 24).
+            Used to convert ``warmup_iters`` to the ``env.common_step_counter`` scale.
     """
 
     def __init__(self, cfg: CurriculumTermCfg, env: ManagerBasedRLEnv):
         super().__init__(cfg, env)
-        self._final_weights: dict[str, float] = {}
+        self._initial_weights: dict[str, float] = {}
         self._initialized = False
 
     def __call__(
@@ -143,21 +140,21 @@ class RegWeightCurriculum(ManagerTermBase):
         env: ManagerBasedRLEnv,
         env_ids: Sequence[int],
         terms: dict[str, float],
-        warmup_steps: int = 20_000,
+        warmup_iters: int = 1000,
+        steps_per_iter: int = 24,
     ) -> float:
         if not self._initialized:
-            for term_name, start_weight in terms.items():
-                self._final_weights[term_name] = getattr(env.reward_manager.cfg, term_name).weight
-                getattr(env.reward_manager.cfg, term_name).weight = start_weight
+            for term_name in terms:
+                self._initial_weights[term_name] = getattr(env.reward_manager.cfg, term_name).weight
             self._initialized = True
 
         step = env.common_step_counter
-        alpha = min(1.0, step / max(warmup_steps, 1))
+        alpha = min(1.0, step / max(warmup_iters * steps_per_iter, 1))
 
         log = env.extras.setdefault("log", {})
         log["curriculum/reg/alpha"] = alpha
-        for term_name, start_weight in terms.items():
-            new_weight = start_weight + alpha * (self._final_weights[term_name] - start_weight)
+        for term_name, target_weight in terms.items():
+            new_weight = self._initial_weights[term_name] + alpha * (target_weight - self._initial_weights[term_name])
             getattr(env.reward_manager.cfg, term_name).weight = new_weight
             log[f"curriculum/reg/{term_name}"] = new_weight
 

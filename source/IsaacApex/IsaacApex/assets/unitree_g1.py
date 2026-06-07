@@ -189,7 +189,7 @@ G1_CFG = ArticulationCfg(
 # ── Per-joint action scale ────────────────────────────────────────────────
 # scale ≈ effort_limit / stiffness / 4 so max residual command ≈ effort_limit
 
-_EFFORT_SCALE = 2.0
+_EFFORT_SCALE = 4.0
 
 ACTION_SCALE: dict[str, float] = {
     "left_hip_roll_joint":     111.0 / 100.0 / _EFFORT_SCALE,

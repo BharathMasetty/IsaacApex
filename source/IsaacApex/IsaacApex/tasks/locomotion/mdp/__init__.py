@@ -20,7 +20,7 @@ from .rewards import (
     joint_torque_penalty,
     joint_vel_penalty,
     default_pose,
-    track_ang_vel_z,
+    TrackAngVelZ,
     track_height,
     track_lin_vel_xy,
     vel_tracking_progress,
