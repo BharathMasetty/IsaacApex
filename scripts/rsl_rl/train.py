@@ -19,7 +19,7 @@ import cli_args  # isort: skip
 parser = argparse.ArgumentParser(description="Train an RL agent with RSL-RL.")
 parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
 parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
-parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
+parser.add_argument("--video_interval", type=int, default=500, help="Interval between video recordings (in iterations).")
 parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
@@ -31,6 +31,8 @@ parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
+parser.add_argument("--wandb", action="store_true", default=False, help="Log to Weights & Biases.")
+parser.add_argument("--wandb_project", type=str, default=None, help="W&B project name (defaults to experiment_name).")
 parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
 )
@@ -146,7 +148,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         agent_cfg.seed = seed
 
     # specify directory for logging experiments
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    log_root_path = os.path.join(_script_dir, "logs", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs: {time-stamp}_{run_name}
@@ -180,11 +183,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
-    # wrap for video recording
-    if args_cli.video:
+    # wrap for video recording (only on rank 0 for distributed training)
+    if args_cli.video and (not args_cli.distributed or app_launcher.local_rank == 0):
         video_kwargs = {
             "video_folder": os.path.join(log_dir, "videos", "train"),
-            "step_trigger": lambda step: step % args_cli.video_interval == 0,
+            "step_trigger": lambda step: step % (args_cli.video_interval * agent_cfg.num_steps_per_env) == 0,
             "video_length": args_cli.video_length,
             "disable_logger": True,
         }
@@ -197,11 +200,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
+    # build runner config, optionally wiring in W&B logging
+    train_cfg_dict = agent_cfg.to_dict()
+    if args_cli.wandb and (not args_cli.distributed or app_launcher.local_rank == 0):
+        train_cfg_dict["logger"] = {
+            "class_name": "WandbLogWriter",
+            "project_name": args_cli.wandb_project or agent_cfg.experiment_name,
+        }
+
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        runner = OnPolicyRunner(env, train_cfg_dict, log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        runner = DistillationRunner(env, train_cfg_dict, log_dir=log_dir, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     # write git state to logs

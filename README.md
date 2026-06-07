@@ -1,135 +1,199 @@
-# Template for Isaac Lab Projects
+# IsaacApex
 
-## Overview
+A research repository for implementing state-of-the-art reinforcement learning methods for **humanoid whole-body control**, built on [Isaac Lab](https://isaac-sim.github.io/IsaacLab) and targeting the **Unitree G1** 29-DoF humanoid robot.
 
-This project/repository serves as a template for building projects or extensions based on Isaac Lab.
-It allows you to develop in an isolated environment, outside of the core Isaac Lab repository.
+The goal is to provide clean, well-structured reference implementations of recent RL-for-locomotion and motion imitation papers — easy to read, easy to extend, and free of proprietary dependencies.
 
-**Key Features:**
+---
 
-- `Isolation` Work outside the core Isaac Lab repository, ensuring that your development efforts remain self-contained.
-- `Flexibility` This template is set up to allow your code to be run as an extension in Omniverse.
+## What's Implemented
 
-**Keywords:** extension, template, isaaclab
+### 1. Velocity-Tracking Locomotion (`IsaacApex-G1-Locomotion-v0`)
+
+A gait-aware locomotion policy that tracks commanded linear velocity, angular velocity, and root height using a periodic gait clock. Inspired by the reward structure of works like [Humanoid-Gym](https://arxiv.org/abs/2404.05695) and [OmniH2O](https://arxiv.org/abs/2406.08858).
+
+**Key design choices:**
+- **12-joint leg policy** — the policy controls only the 6+6 leg joints; waist and arms are held at default via a passive action term
+- **Gait clock** — per-foot phase signals [sin, cos] × 2 drive gait-shaping rewards and are fed as observations, enabling the policy to learn emergent gaits without a reference motion
+- **Subpopulation curriculum** — each episode is randomly assigned to standing (20%), turn-in-place (10%), heading-based (30%), or free walking, providing robust coverage of the command space
+- **Asymmetric actor-critic** — the actor sees only proprioception (joint positions/velocities, IMU, gait phase); the critic additionally receives foot contact state, air time, contact forces, and foot heights
+- **Left-right symmetry augmentation** — every training batch is doubled by mirroring observations and actions across the sagittal plane, improving sample efficiency and gate symmetry
+- **DelayedPD actuators** — 0–4 physics-step command delay (0–20 ms) on all joints for realistic sim-to-real transfer
+
+**Reward terms:** linear velocity tracking · angular velocity tracking · height tracking · gait phase synchronization · foot clearance · torso upright · default pose regularization · foot flat at contact · foot slip · foot impact velocity · action rate · joint velocity/torque/limit penalties · termination penalty
+
+---
+
+### 2. Motion Imitation (`IsaacApex-G1-MotionTracking-v0`)
+
+A reference-motion tracking policy that imitates a motion capture clip, following the BeyondMimic / AMP family of approaches.
+
+**Key design choices:**
+- **Loads any .npz motion file** — the clip provides per-frame joint positions/velocities and body poses/velocities in world frame; the path is a configurable parameter
+- **Adaptive start-frame sampling** — the clip is divided into bins; bins where episodes fail more often are sampled more frequently, pushing coverage toward hard regions of the motion
+- **Full-body tracking** — rewards penalise deviation in anchor (pelvis) position and orientation, all body positions and orientations in the robot root frame, and body linear/angular velocities
+- **Termination on large deviation** — episodes end if the anchor height or orientation, or any tracked body height, drifts beyond a threshold, keeping training signal meaningful
+- **Asymmetric actor-critic** — actor receives proprioception + reference body poses relative to the robot root; critic additionally receives the robot's current body poses for privileged comparison
+
+**Reward terms:** anchor position tracking · anchor orientation tracking · body position tracking (all links) · body orientation tracking · body linear velocity tracking · body angular velocity tracking · action rate · joint limit penalty · termination penalty
+
+---
 
 ## Installation
 
-- Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
-  We recommend using the conda or uv installation as it simplifies calling Python scripts from the terminal.
-
-- Clone or copy this project/repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
-
-- Using a python interpreter that has Isaac Lab installed, install the library in editable mode using:
-
-    ```bash
-    # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-    python -m pip install -e source/IsaacApex
-
-- Verify that the extension is correctly installed by:
-
-    - Listing the available tasks:
-
-        Note: It the task name changes, it may be necessary to update the search pattern `"Template-"`
-        (in the `scripts/list_envs.py` file) so that it can be listed.
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/list_envs.py
-        ```
-
-    - Running a task:
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/<RL_LIBRARY>/train.py --task=<TASK_NAME>
-        ```
-
-    - Running a task with dummy agents:
-
-        These include dummy agents that output zero or random agents. They are useful to ensure that the environments are configured correctly.
-
-        - Zero-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/zero_agent.py --task=<TASK_NAME>
-            ```
-        - Random-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/random_agent.py --task=<TASK_NAME>
-            ```
-
-### Set up IDE (Optional)
-
-To setup the IDE, please follow these instructions:
-
-- Run VSCode Tasks, by pressing `Ctrl+Shift+P`, selecting `Tasks: Run Task` and running the `setup_python_env` in the drop down menu.
-  When running this task, you will be prompted to add the absolute path to your Isaac Sim installation.
-
-If everything executes correctly, it should create a file .python.env in the `.vscode` directory.
-The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse.
-This helps in indexing all the python modules for intelligent suggestions while writing code.
-
-### Setup as Omniverse Extension (Optional)
-
-We provide an example UI extension that will load upon enabling your extension defined in `source/IsaacApex/IsaacApex/ui_extension_example.py`.
-
-To enable your extension, follow these steps:
-
-1. **Add the search path of this project/repository** to the extension manager:
-    - Navigate to the extension manager using `Window` -> `Extensions`.
-    - Click on the **Hamburger Icon**, then go to `Settings`.
-    - In the `Extension Search Paths`, enter the absolute path to the `source` directory of this project/repository.
-    - If not already present, in the `Extension Search Paths`, enter the path that leads to Isaac Lab's extension directory directory (`IsaacLab/source`)
-    - Click on the **Hamburger Icon**, then click `Refresh`.
-
-2. **Search and enable your extension**:
-    - Find your extension under the `Third Party` category.
-    - Toggle it to enable your extension.
-
-## Code formatting
-
-We have a pre-commit template to automatically format your code.
-To install pre-commit:
+**Prerequisites:** Isaac Lab installed and on your Python path. See the [Isaac Lab installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
 
 ```bash
-pip install pre-commit
+# Clone this repository outside the IsaacLab directory
+git clone <this-repo-url> IsaacApex
+cd IsaacApex
+
+# Install in editable mode (use isaaclab.sh -p instead of python if not using conda/venv)
+python -m pip install -e source/IsaacApex
 ```
 
-Then you can run pre-commit with:
+Verify the install by listing registered environments:
 
 ```bash
-pre-commit run --all-files
+python scripts/list_envs.py
 ```
 
-## Troubleshooting
+You should see `IsaacApex-G1-Locomotion-v0` and `IsaacApex-G1-MotionTracking-v0`.
 
-### Pylance Missing Indexing of Extensions
+---
 
-In some VsCode versions, the indexing of part of the extensions is missing.
-In this case, add the path to your extension in `.vscode/settings.json` under the key `"python.analysis.extraPaths"`.
+## Training
 
-```json
-{
-    "python.analysis.extraPaths": [
-        "<path-to-ext-repo>/source/IsaacApex"
-    ]
-}
+All training uses RSL-RL (PPO). Replace `python` with `isaaclab.sh -p` if Isaac Lab is not on your system Python path.
+
+### Locomotion
+
+```bash
+python scripts/rsl_rl/train.py \
+    --task IsaacApex-G1-Locomotion-v0 \
+    --num_envs 4096 \
+    --headless
 ```
 
-### Pylance Crash
+Resume from a checkpoint:
 
-If you encounter a crash in `pylance`, it is probable that too many files are indexed and you run out of memory.
-A possible solution is to exclude some of omniverse packages that are not used in your project.
-To do so, modify `.vscode/settings.json` and comment out packages under the key `"python.analysis.extraPaths"`
-Some examples of packages that can likely be excluded are:
-
-```json
-"<path-to-isaac-sim>/extscache/omni.anim.*"         // Animation packages
-"<path-to-isaac-sim>/extscache/omni.kit.*"          // Kit UI tools
-"<path-to-isaac-sim>/extscache/omni.graph.*"        // Graph UI tools
-"<path-to-isaac-sim>/extscache/omni.services.*"     // Services tools
-...
+```bash
+python scripts/rsl_rl/train.py \
+    --task IsaacApex-G1-Locomotion-v0 \
+    --num_envs 4096 \
+    --headless \
+    --resume \
+    --load_run <run_name> \
+    --checkpoint <checkpoint_file>
 ```
+
+### Motion Imitation
+
+The motion file path must be set before training. Pass it as a config override:
+
+```bash
+python scripts/rsl_rl/train.py \
+    --task IsaacApex-G1-MotionTracking-v0 \
+    --num_envs 2048 \
+    --headless \
+    --motion_file /path/to/your/motion.npz
+```
+
+Or override it in a launch script:
+
+```python
+from IsaacApex.tasks.motion_tracking.env_cfg import G1MotionTrackingEnvCfg
+
+env_cfg = G1MotionTrackingEnvCfg()
+env_cfg.commands.motion_command.motion_file = "/path/to/your/motion.npz"
+```
+
+The `.npz` file must contain the following arrays (all `float32`):
+
+| Key | Shape | Description |
+|-----|-------|-------------|
+| `fps` | scalar | Motion capture frame rate |
+| `joint_names` | `(J,)` | Joint name strings |
+| `body_names` | `(B,)` | Body name strings |
+| `joint_pos` | `(T, J)` | Joint positions (rad) |
+| `joint_vel` | `(T, J)` | Joint velocities (rad/s) |
+| `body_pos_w` | `(T, B, 3)` | Body world positions (m) |
+| `body_quat_w` | `(T, B, 4)` | Body world orientations (w, x, y, z) |
+| `body_lin_vel_w` | `(T, B, 3)` | Body linear velocities (m/s) |
+| `body_ang_vel_w` | `(T, B, 3)` | Body angular velocities (rad/s) |
+
+---
+
+## Playback / Evaluation
+
+```bash
+# Locomotion
+python scripts/rsl_rl/play.py \
+    --task IsaacApex-G1-Locomotion-v0 \
+    --num_envs 16 \
+    --load_run <run_name> \
+    --checkpoint <checkpoint_file>
+
+# Motion tracking
+python scripts/rsl_rl/play.py \
+    --task IsaacApex-G1-MotionTracking-v0 \
+    --num_envs 4 \
+    --load_run <run_name> \
+    --checkpoint <checkpoint_file>
+```
+
+Sanity-check an environment with a zero-action or random agent (no training required):
+
+```bash
+python scripts/zero_agent.py --task IsaacApex-G1-Locomotion-v0
+python scripts/random_agent.py --task IsaacApex-G1-Locomotion-v0
+```
+
+---
+
+## Repository Layout
+
+```
+IsaacApex/
+├── source/IsaacApex/IsaacApex/
+│   ├── assets/
+│   │   └── unitree_g1.py          # G1 29-DoF ArticulationCfg, joint lists, action scales
+│   └── tasks/
+│       ├── locomotion/
+│       │   ├── env_cfg.py         # G1LocomotionEnvCfg
+│       │   ├── symmetry.py        # Left-right symmetry augmentation
+│       │   ├── agents/
+│       │   │   └── rsl_rl_cfg.py  # G1LocomotionPPOCfg
+│       │   └── mdp/
+│       │       ├── commands.py    # GaitCommand — gait clock + subpopulations
+│       │       ├── observations.py
+│       │       ├── rewards.py
+│       │       ├── terminations.py
+│       │       └── actions.py     # HoldDefaultJointsAction
+│       └── motion_tracking/
+│           ├── env_cfg.py         # G1MotionTrackingEnvCfg
+│           ├── agents/
+│           │   └── rsl_rl_cfg.py  # G1MotionTrackingPPOCfg
+│           └── mdp/
+│               ├── commands.py    # MotionCommand — .npz loader + adaptive sampling
+│               ├── observations.py
+│               ├── rewards.py
+│               └── terminations.py
+└── scripts/
+    ├── rsl_rl/
+    │   ├── train.py
+    │   └── play.py
+    ├── list_envs.py
+    ├── zero_agent.py
+    └── random_agent.py
+```
+
+---
+
+## Development Notes
+
+**Adding a new task:** create a new subdirectory under `tasks/`, implement `env_cfg.py` and `mdp/`, register the gym environment in `__init__.py`, and add an `agents/rsl_rl_cfg.py`. The `import_packages` call in `tasks/__init__.py` will auto-discover it.
+
+**Symmetry augmentation:** the locomotion policy's symmetry function is in `tasks/locomotion/symmetry.py`. Wire it into RSL-RL by setting the `symmetry_fn` field in the runner config or calling `locomotion_symmetry_fn` from a custom training loop.
+
+**IDE setup:** press `Ctrl+Shift+P` → `Tasks: Run Task` → `setup_python_env` in VSCode to configure the Python environment for IntelliSense.
